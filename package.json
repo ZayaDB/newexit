@@ -1,0 +1,10 @@
+{
+  "name": "new-exit",
+  "private": true,
+  "scripts": {
+    "backend": "cd backend && npm run dev",
+    "backend:seed": "cd backend && npm run seed",
+    "mobile": "cd mobile && npm start",
+    "setup": "cd backend && npm install && cd ../mobile && npm install"
+  }
+}
