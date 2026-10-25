@@ -5,7 +5,7 @@
 ## 구성
 
 - `backend/` — Node.js + Express API, DB는 Supabase (Postgres)
-- `supabase/` — DB 스키마(`migrations/`)와 데모 데이터(`seed.sql`)
+- `supabase/` — DB 스키마와 기본 카테고리 (`migrations/`)
 - `mobile/` — Expo (React Native) iOS/Android 앱
 
 ## 우리가 지금 구현한 것
@@ -23,7 +23,7 @@
 ## 사전 준비
 
 1. **Node.js** 18+
-2. **Supabase 프로젝트** `newexit` (서울 리전, 테이블·데모 데이터 이미 생성됨)
+2. **Supabase 프로젝트** `newexit` (서울 리전, 테이블 이미 생성됨)
 3. **Expo Go** 앱 (휴대폰 테스트) 또는 Android 에뮬레이터
 
 ## 실행 방법
@@ -45,15 +45,10 @@ npm install
 npm run dev     # http://localhost:3001  →  /api/health 에서 database: ok 확인
 ```
 
-데이터를 데모 상태로 되돌리기: `npm run seed` (모든 데이터 삭제 후 데모 데이터 입력)
-빈 DB에 테이블부터 만들기: `npm run seed -- --schema`
-전체 API 테스트: `npm test` (⚠️ DB를 데모 데이터로 초기화하니 실서비스 DB에는 금지)
+빈 DB에 테이블·카테고리 만들기: `npm run db:setup` (새 DB에서 한 번만)
+전체 API 테스트: `npm test` (테스트용 계정·상품을 만들었다가 끝나면 지움)
 
-**데모 계정** (비밀번호: `demo1234`)
-
-- `buyer@newexit.mn` — 구매자
-- `seller@newexit.mn` — 판매자
-- `mover@newexit.mn` — 배송기사
+계정은 앱에서 회원가입으로 만들어요. 배송기사(`mover`)·관리자(`admin`) 권한은 Supabase 대시보드 → Table Editor → `users`에서 `role`을 바꿔 주세요.
 
 ### 2. 모바일 앱
 

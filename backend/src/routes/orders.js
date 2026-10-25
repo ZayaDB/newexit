@@ -93,11 +93,7 @@ router.post('/', auth, async (req, res) => {
       const totalAmount = subtotal - pointsApplied;
 
       const now = new Date();
-      const statusHistory = [
-        { status: 'confirmed', label: 'Захиалга батлагдсан', timestamp: now },
-        { status: 'preparing', label: 'Бэлтгэгдэж байна', timestamp: new Date(now.getTime() + DAY) },
-        { status: 'shipping', label: 'Хүргэлтэнд гарсан', timestamp: new Date(now.getTime() + 2 * DAY) },
-      ];
+      const statusHistory = [{ status: 'confirmed', label: 'Захиалга батлагдсан', timestamp: now }];
 
       const orderRes = await db.query(
         `insert into public.orders (
@@ -117,7 +113,7 @@ router.post('/', auth, async (req, res) => {
           pointsApplied,
           totalAmount,
           paymentMethod,
-          deliveryAddress || 'Улаанбаатар, Монгол',
+          deliveryAddress || null,
           Boolean(includeAssembly),
           Boolean(includeDelivery),
           JSON.stringify(statusHistory),
@@ -125,34 +121,20 @@ router.post('/', auth, async (req, res) => {
       );
       const orderRow = orderRes.rows[0];
 
+      // A new delivery has only been confirmed; no driver is assigned yet.
       const timeline = [
         { status: 'confirmed', labelMn: 'Захиалга батлагдсан', timestamp: now, completed: true },
-        { status: 'preparing', labelMn: 'Бэлтгэгдэж байна', timestamp: new Date(now.getTime() + DAY), completed: true },
-        { status: 'out_for_delivery', labelMn: 'Хүргэлтэнд гарсан', timestamp: new Date(now.getTime() + 2 * DAY), completed: true },
+        { status: 'preparing', labelMn: 'Бэлтгэгдэж байна', timestamp: null, completed: false },
+        { status: 'out_for_delivery', labelMn: 'Хүргэлтэнд гарсан', timestamp: null, completed: false },
         { status: 'delivered', labelMn: 'Хүргэгдсэн', timestamp: null, completed: false },
       ];
-      const driver = {
-        name: 'Мөнх-Эрдэнэ',
-        phone: '+82 10-1234-5678',
-        rating: 4.9,
-        role: 'Хүргэлтийн жолооч',
-        isOnline: true,
-      };
 
       const deliveryRes = await db.query(
         `insert into public.deliveries (
-           order_id, tracking_number, departure_date, estimated_arrival,
-           current_status, timeline, driver, eta
-         ) values ($1,$2,$3,$4,'out_for_delivery',$5,$6,'2-4 өдөр')
+           order_id, tracking_number, estimated_arrival, current_status, timeline
+         ) values ($1,$2,$3,'confirmed',$4)
          returning *`,
-        [
-          orderRow.id,
-          generateTrackingNumber(),
-          now,
-          estimatedArrival(now),
-          JSON.stringify(timeline),
-          JSON.stringify(driver),
-        ]
+        [orderRow.id, generateTrackingNumber(), estimatedArrival(now), JSON.stringify(timeline)]
       );
 
       await db.query("update public.products set status = 'sold' where id = $1", [product.id]);
