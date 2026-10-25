@@ -4,7 +4,7 @@
 
 ```
 Mobile/
-├── backend/          # Node.js + Express + MongoDB API
+├── backend/          # Node.js + Express API (Supabase Postgres)
 ├── mobile/           # Expo (React Native) 앱
 └── docs/             # 문서
 ```
@@ -65,8 +65,8 @@ EXPO_PUBLIC_OFFLINE_DEMO=1
 | 영역 | 기술 |
 |------|------|
 | 모바일 | Expo SDK 54, React Native, TypeScript |
-| 백엔드 | Node.js, Express, Mongoose |
-| DB | MongoDB (로컬) |
+| 백엔드 | Node.js, Express, pg |
+| DB | Supabase Postgres (`newexit`, 서울) |
 | 인증 | JWT (이메일/전화) |
 
 ## 알려진 제한

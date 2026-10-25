@@ -4,7 +4,8 @@
 
 ## 구성
 
-- `backend/` — Node.js + Express + MongoDB API
+- `backend/` — Node.js + Express API, DB는 Supabase (Postgres)
+- `supabase/` — DB 스키마(`migrations/`)와 데모 데이터(`seed.sql`)
 - `mobile/` — Expo (React Native) iOS/Android 앱
 
 ## 우리가 지금 구현한 것
@@ -22,18 +23,8 @@
 ## 사전 준비
 
 1. **Node.js** 18+
-2. **MongoDB** 로컬 (`mongodb://127.0.0.1:27017`)
+2. **Supabase 프로젝트** `newexit` (서울 리전, 테이블·데모 데이터 이미 생성됨)
 3. **Expo Go** 앱 (휴대폰 테스트) 또는 Android 에뮬레이터
-
-### MongoDB 설치 (Windows)
-
-[MongoDB Community Server](https://www.mongodb.com/try/download/community) 설치 후 서비스 시작.
-
-또는 Docker:
-
-```bash
-docker run -d --name newexit-mongo -p 27017:27017 mongo:7
-```
 
 ## 실행 방법
 
@@ -41,10 +32,22 @@ docker run -d --name newexit-mongo -p 27017:27017 mongo:7
 
 ```bash
 cd backend
-npm install
-npm run seed    # 데모 데이터 + 계정 생성
-npm run dev     # http://localhost:3001
+cp .env.example .env   # Windows: copy .env.example .env
 ```
+
+`.env`에 두 가지를 채워요:
+
+- `DATABASE_URL` — Supabase 대시보드 → `newexit` → **Connect** → **Session pooler** URI 복사 후 `[YOUR-PASSWORD]`를 DB 비밀번호로 교체 (모르면 Project Settings → Database → Reset database password)
+- `JWT_SECRET` — `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` 결과 붙여넣기
+
+```bash
+npm install
+npm run dev     # http://localhost:3001  →  /api/health 에서 database: ok 확인
+```
+
+데이터를 데모 상태로 되돌리기: `npm run seed` (모든 데이터 삭제 후 데모 데이터 입력)
+빈 DB에 테이블부터 만들기: `npm run seed -- --schema`
+전체 API 테스트: `npm test` (⚠️ DB를 데모 데이터로 초기화하니 실서비스 DB에는 금지)
 
 **데모 계정** (비밀번호: `demo1234`)
 
@@ -81,11 +84,16 @@ EXPO_PUBLIC_API_URL=http://192.168.x.x:3001/api
 | POST | `/api/products` | 상품 등록 (인증) |
 | POST | `/api/orders` | 주문/결제 (인증) |
 | GET | `/api/deliveries/order/:orderId` | 배송 추적 |
+| GET | `/api/deliveries/tracking/:trackingNumber` | 송장번호로 배송 추적 |
+| GET | `/api/orders/:id` | 주문 상세 (구매자·판매자·기사만) |
+| GET | `/api/categories` | 카테고리 목록 |
+| GET | `/api/auth/me` | 내 정보 |
+| GET | `/api/health` | 서버·DB 상태 |
 
 ## 기술 선택 이유
 
 - **Expo**: Windows에서 개발 가능, iOS 빌드는 Mac/EAS로 진행
-- **MongoDB**: 요청하신 로컬 DB 테스트
+- **Supabase (Postgres)**: 관리형 DB, 나중에 Storage(이미지)·Realtime(채팅)도 같은 곳에서 사용 가능
 - **Node.js API**: 빠른 CRUD, JWT 인증
 
 ## 다음 단계 (실서비스 전)
@@ -93,6 +101,6 @@ EXPO_PUBLIC_API_URL=http://192.168.x.x:3001/api
 1. SNS OAuth (Kakao, Google, Apple)
 2. SMS OTP (Twilio 등)
 3. 실제 PG (Z-Pay, 카드)
-4. S3/Cloudinary 이미지 업로드
+4. Supabase Storage 이미지 업로드
 5. WebSocket 채팅
 6. 지도 SDK (실시간 트래킹)
