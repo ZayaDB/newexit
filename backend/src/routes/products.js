@@ -37,8 +37,14 @@ function buildWhere(q) {
   };
 
   if (q.category && q.category !== 'all') {
-    if (serialize.isUuid(q.category)) add('p.category_id = ?', q.category);
-    else add('c.key = ?', String(q.category));
+    if (serialize.isUuid(q.category)) {
+      // The "all" category's id also means no filter.
+      params.push(q.category);
+      const n = `$${params.length}`;
+      clauses.push(
+        `(p.category_id = ${n} or exists (select 1 from public.categories a where a.id = ${n} and a.key = 'all'))`
+      );
+    } else add('c.key = ?', String(q.category));
   }
   if (q.featured === 'true') clauses.push('p.is_featured');
   if (q.free === 'true') clauses.push('p.is_free');

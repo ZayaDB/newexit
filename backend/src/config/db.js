@@ -15,7 +15,11 @@ const isLocal = /@(localhost|127\.0\.0\.1)(:|\/)/.test(connectionString);
 const pool = new Pool({
   connectionString,
   ssl: isLocal ? false : { rejectUnauthorized: false },
-  max: 10,
+  // On Netlify each function instance handles one request at a time, so keep
+  // the pool small there (PG_POOL_MAX=2) to avoid exhausting Supabase connections.
+  max: parseInt(process.env.PG_POOL_MAX || '10', 10),
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 10000,
 });
 
 pool.on('error', (err) => {

@@ -135,6 +135,7 @@ test('categories', async () => {
   assert.equal(r.body[0].key, 'all');
   assert.ok(r.body[0]._id);
   ids.furnitureCategory = r.body.find((c) => c.key === 'furniture')._id;
+  ids.allCategory = r.body.find((c) => c.key === 'all')._id;
 });
 
 test('create product', async () => {
@@ -177,6 +178,7 @@ test('product list, filters, sort, paging', async () => {
   assert.equal((await api('GET', `/products?search=${TAG}&category=electronics`)).body.total, 1);
   assert.equal((await api('GET', `/products?search=${TAG}&category=${ids.furnitureCategory}`)).body.total, 3);
   assert.equal((await api('GET', `/products?search=${TAG}&category=all`)).body.total, 5);
+  assert.equal((await api('GET', `/products?search=${TAG}&category=${ids.allCategory}`)).body.total, 5);
   assert.equal((await api('GET', `/products?search=${TAG}&free=true`)).body.total, 1);
   assert.equal((await api('GET', `/products?search=${TAG}&featured=true`)).body.total, 0);
   assert.equal((await api('GET', `/products?search=%25${TAG}`)).body.total, 0, '% is matched literally');
