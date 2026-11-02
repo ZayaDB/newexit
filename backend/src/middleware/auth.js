@@ -1,39 +1,55 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { query } = require('../config/db');
+const serialize = require('../lib/serialize');
+
+async function findUser(userId) {
+  if (!serialize.isUuid(userId)) return null;
+  const { rows } = await query('select * from public.users where id = $1', [userId]);
+  return serialize.user(rows[0]);
+}
+
+function readToken(req) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return null;
+  return header.split(' ')[1];
+}
 
 async function auth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
+  const token = readToken(req);
+  if (!token) {
     return res.status(401).json({ message: 'Нэвтрэх шаардлагатай' });
   }
 
+  let decoded;
   try {
-    const token = header.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(401).json({ message: 'Буруу эсвэл хугацаа дууссан токен' });
+  }
+
+  try {
+    const user = await findUser(decoded.userId);
     if (!user) {
       return res.status(401).json({ message: 'Хэрэглэгч олдсонгүй' });
     }
     req.user = user;
     next();
-  } catch {
-    return res.status(401).json({ message: 'Буруу эсвэл хугацаа дууссан токен' });
+  } catch (error) {
+    next(error);
   }
 }
 
-function optionalAuth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    return next();
-  }
+async function optionalAuth(req, _res, next) {
+  const token = readToken(req);
+  if (!token) return next();
 
-  const token = header.split(' ')[1];
-  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
-    if (!err && decoded?.userId) {
-      req.user = await User.findById(decoded.userId).select('-password');
-    }
-    next();
-  });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = (await findUser(decoded.userId)) || undefined;
+  } catch {
+    // Invalid token on a public route: continue as a guest.
+  }
+  next();
 }
 
 module.exports = { auth, optionalAuth };

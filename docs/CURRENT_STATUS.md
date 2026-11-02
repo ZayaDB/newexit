@@ -4,7 +4,7 @@
 
 ```
 Mobile/
-├── backend/          # Node.js + Express + MongoDB API
+├── backend/          # Node.js + Express API (Supabase Postgres)
 ├── mobile/           # Expo (React Native) 앱
 └── docs/             # 문서
 ```
@@ -16,7 +16,7 @@ Mobile/
 ```bash
 cd backend
 npm install
-npm run seed      # 데모 데이터
+npm run db:setup  # 새 DB일 때만 (테이블·카테고리)
 npm run dev       # http://localhost:3001
 ```
 
@@ -30,19 +30,15 @@ npx expo start --lan --go -c --port 8082
 
 iPhone Expo Go (SDK 54)에서 같은 Wi-Fi로 연결.
 
-### 데모 계정
+### 계정
 
-| 필드 | 값 |
-|------|-----|
-| 이메일 | buyer@newexit.mn |
-| 전화 | +97699112233 |
-| 비밀번호 | demo1234 |
+앱에서 회원가입으로 만들어요. 기사·관리자 권한은 Supabase `users` 테이블에서 `role` 변경.
 
 ## 환경변수 (mobile/.env)
 
 ```env
 EXPO_PUBLIC_API_URL=http://192.168.0.86:3001/api
-EXPO_PUBLIC_OFFLINE_DEMO=1
+EXPO_PUBLIC_OFFLINE_DEMO=0
 ```
 
 - `OFFLINE_DEMO=1`: 서버 없이 앱 내 목데이터로 동작
@@ -65,8 +61,8 @@ EXPO_PUBLIC_OFFLINE_DEMO=1
 | 영역 | 기술 |
 |------|------|
 | 모바일 | Expo SDK 54, React Native, TypeScript |
-| 백엔드 | Node.js, Express, Mongoose |
-| DB | MongoDB (로컬) |
+| 백엔드 | Node.js, Express, pg |
+| DB | Supabase Postgres (`newexit`, 서울) |
 | 인증 | JWT (이메일/전화) |
 
 ## 알려진 제한
