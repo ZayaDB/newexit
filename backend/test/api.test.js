@@ -8,6 +8,8 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 const app = require('../src/app');
 const { pool } = require('../src/config/db');
@@ -298,4 +300,32 @@ test('delivery tracking', async () => {
 test('bad JSON and unknown routes', async () => {
   assert.equal((await api('POST', '/auth/login/email', { body: '{bad' })).status, 400);
   assert.equal((await api('GET', '/nope')).status, 404);
+});
+
+test('image upload and download', async () => {
+  // 1x1 PNG
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  assert.equal((await api('POST', '/images', { body: { data: png, contentType: 'image/png' } })).status, 401);
+
+  const up = await api('POST', '/images', { token: tokens.seller, body: { data: `data:image/png;base64,${png}` } });
+  assert.equal(up.status, 201, JSON.stringify(up.body));
+  assert.match(up.body.url, /^http:\/\/127\.0\.0\.1:\d+\/api\/images\/[0-9a-f-]{36}\.png$/);
+
+  const res = await fetch(up.body.url);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await res.arrayBuffer()), Buffer.from(png, 'base64'));
+
+  const bad = (body) => api('POST', '/images', { token: tokens.seller, body });
+  assert.equal((await bad({ data: png, contentType: 'image/gif' })).status, 400);
+  assert.equal((await bad({})).status, 400);
+  const tooBig = Buffer.alloc(4 * 1024 * 1024 + 1).toString('base64');
+  assert.equal((await bad({ data: tooBig, contentType: 'image/jpeg' })).status, 413);
+  assert.equal((await api('GET', '/images/..%2F..%2Fpackage.json')).status, 404);
+  assert.equal((await api('GET', '/images/00000000-0000-0000-0000-000000000000.png')).status, 404);
+
+  const product = await createProduct('Зурагтай', { images: [up.body.url] });
+  assert.deepEqual(product.images, [up.body.url]);
+
+  fs.rmSync(path.join(__dirname, '..', 'uploads', up.body.url.split('/').pop()), { force: true });
 });

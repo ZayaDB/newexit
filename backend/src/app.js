@@ -8,8 +8,12 @@ const categoryRoutes = require('./routes/categories');
 const productRoutes = require('./routes/products');
 const { router: orderRoutes } = require('./routes/orders');
 const deliveryRoutes = require('./routes/deliveries');
+const imageRoutes = require('./routes/images');
 
 const app = express();
+
+// Behind Netlify's proxy: trust X-Forwarded-Proto so image URLs use https.
+app.set('trust proxy', true);
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -29,6 +33,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/deliveries', deliveryRoutes);
+app.use('/api/images', imageRoutes);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ message: 'Олдсонгүй' });
