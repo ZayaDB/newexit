@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test test/api.test.js",
-    "db:setup": "node src/db-setup.js"
+    "db:setup": "node src/db-setup.js",
+    "db:check": "node src/db-check.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
