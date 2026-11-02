@@ -37,7 +37,7 @@ cp .env.example .env   # Windows: copy .env.example .env
 
 `.env`에 두 가지를 채워요:
 
-- `DATABASE_URL` — 백엔드 전용 DB 계정 `newexit_api`로 접속 (`supabase/migrations/20261102000000_backend_api_role.sql` 참고). 형식: `postgresql://newexit_api.<project-ref>:<비밀번호>@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres`
+- `DATABASE_URL` — 백엔드 전용 DB 계정 `newexit_api`로 접속 (`supabase/migrations/20261102000000_backend_api_role.sql` 참고). 형식: `postgresql://newexit_api.<project-ref>:<비밀번호>@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres`
 - `JWT_SECRET` — `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` 결과 붙여넣기
 
 ```bash
