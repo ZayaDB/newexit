@@ -99,6 +99,19 @@ router.get('/', optionalAuth, async (req, res) => {
   }
 });
 
+// My listings: everything I've posted (active, sold, ...), newest first.
+router.get('/mine', auth, async (req, res) => {
+  try {
+    const { rows } = await query(
+      `${SELECT_WITH_RELATIONS} where p.seller_id = $1 order by p.created_at desc`,
+      [req.user.id]
+    );
+    res.json({ items: rows.map((row) => withRelations(row)), total: rows.length });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 router.get('/:id', optionalAuth, async (req, res) => {
   try {
     if (!serialize.isUuid(req.params.id)) {

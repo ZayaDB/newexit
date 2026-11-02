@@ -344,3 +344,28 @@ test('image upload and download', async () => {
 
   fs.rmSync(path.join(__dirname, '..', 'uploads', up.body.url.split('/').pop()), { force: true });
 });
+
+test('my listings and my orders', async () => {
+  const mine = await api('GET', '/products/mine', { token: tokens.seller });
+  assert.equal(mine.status, 200);
+  assert.ok(mine.body.items.length >= 5);
+  assert.ok(mine.body.items.every((p) => p.seller.name === 'Тест seller'));
+  assert.ok(mine.body.items.some((p) => p.status === 'sold'), 'sold items are listed too');
+  const dates = mine.body.items.map((p) => p.createdAt);
+  assert.deepEqual(dates, [...dates].sort().reverse());
+  assert.equal((await api('GET', '/products/mine', { token: tokens.mover })).body.total, 0);
+  assert.equal((await api('GET', '/products/mine')).status, 401);
+
+  const buyer = await api('GET', '/orders/mine', { token: tokens.buyer });
+  assert.equal(buyer.status, 200);
+  assert.ok(buyer.body.purchases.length >= 1);
+  assert.equal(buyer.body.sales.length, 0);
+  const first = buyer.body.purchases.find((x) => x.order._id === ids.order);
+  assert.match(first.order.product.title, /Хөргөгч/);
+  assert.equal(first.delivery.trackingNumber, ids.tracking);
+
+  const seller = await api('GET', '/orders/mine', { token: tokens.seller });
+  assert.equal(seller.body.purchases.length, 0);
+  assert.ok(seller.body.sales.length >= 3);
+  assert.equal((await api('GET', '/orders/mine')).status, 401);
+});

@@ -170,6 +170,38 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// My orders: what I bought (purchases) and what I sold (sales), newest first.
+router.get('/mine', auth, async (req, res) => {
+  try {
+    const { rows } = await query(
+      `select o.*, to_jsonb(p) as product_row, to_jsonb(b) as buyer_row,
+              to_jsonb(s) as seller_row, to_jsonb(d) as delivery_row
+       from public.orders o
+       join public.products p on p.id = o.product_id
+       join public.users b on b.id = o.buyer_id
+       join public.users s on s.id = o.seller_id
+       left join public.deliveries d on d.order_id = o.id
+       where o.buyer_id = $1 or o.seller_id = $1
+       order by o.created_at desc`,
+      [req.user.id]
+    );
+    const format = (row) => ({
+      order: serialize.order(row, {
+        product: serialize.pick(serialize.product(row.product_row), ['title', 'images', 'price']),
+        buyer: serialize.pick(serialize.user(row.buyer_row), ['name']),
+        seller: serialize.pick(serialize.user(row.seller_row), ['name']),
+      }),
+      delivery: serialize.pick(serialize.delivery(row.delivery_row), ['trackingNumber', 'currentStatus']),
+    });
+    res.json({
+      purchases: rows.filter((r) => r.buyer_id === req.user.id).map(format),
+      sales: rows.filter((r) => r.seller_id === req.user.id).map(format),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 router.get('/:id', auth, async (req, res) => {
   try {
     if (!serialize.isUuid(req.params.id)) {
