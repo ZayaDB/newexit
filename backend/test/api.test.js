@@ -119,6 +119,21 @@ test('login with email and phone', async () => {
   assert.equal(byPhone.status, 200);
   assert.equal(byPhone.body.user.email, email('buyer'));
   assert.equal((await api('POST', '/auth/login/phone', { body: { phone: phone(1), password: 'no' } })).status, 401);
+
+  // Korean numbers match however they're typed
+  const kr = `010${PHONE_BASE}`;
+  const reg = await api('POST', '/auth/register', {
+    body: { name: 'KR', email: email('kr'), phone: kr.replace(/^(\d{3})(\d{4})(\d{4})$/, '$1-$2-$3'), password: PASSWORD },
+  });
+  assert.equal(reg.status, 201);
+  assert.equal(reg.body.user.phone, kr);
+  for (const typed of [kr, `+82 ${kr.slice(1)}`, kr.replace(/^(\d{3})(\d{4})(\d{4})$/, '$1 $2 $3')]) {
+    const r = await api('POST', '/auth/login/phone', { body: { phone: typed, password: PASSWORD } });
+    assert.equal(r.status, 200, typed);
+  }
+  assert.equal((await api('POST', '/auth/register', {
+    body: { name: 'dup', phone: `+82-${kr.slice(1)}`, password: 'x' },
+  })).status, 409);
 });
 
 test('me', async () => {

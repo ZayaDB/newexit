@@ -27,6 +27,18 @@ function formatUser(user) {
   };
 }
 
+// One canonical form per phone number, so "010-1234-5678", "01012345678" and
+// "+82 10 1234 5678" are the same account. Korean numbers are stored as 010…;
+// other countries keep their +country code. Same rule as the DB migration.
+function normalizePhone(value) {
+  if (typeof value !== 'string') return undefined;
+  const hasPlus = value.trim().startsWith('+');
+  const digits = value.replace(/\D/g, '');
+  if (!digits) return undefined;
+  if (hasPlus && digits.startsWith('82')) return `0${digits.slice(2)}`;
+  return hasPlus ? `+${digits}` : digits;
+}
+
 function clean(value) {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -37,7 +49,7 @@ router.post('/register', async (req, res) => {
   try {
     const name = clean(req.body.name);
     const email = clean(req.body.email)?.toLowerCase();
-    const phone = clean(req.body.phone);
+    const phone = normalizePhone(req.body.phone);
     const { password } = req.body;
 
     if (!name || (!email && !phone) || !password) {
@@ -93,7 +105,7 @@ router.post('/login/email', async (req, res) => {
 
 router.post('/login/phone', async (req, res) => {
   try {
-    const user = await loginBy('phone', clean(req.body.phone), req.body.password);
+    const user = await loginBy('phone', normalizePhone(req.body.phone), req.body.password);
     if (!user) {
       return res.status(401).json({ message: 'Утас эсвэл нууц үг буруу' });
     }
