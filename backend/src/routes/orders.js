@@ -47,7 +47,7 @@ function bankAccount() {
   return {
     bank: process.env.BANK_NAME || 'KB Kookmin Bank (KB국민은행)',
     accountNumber: process.env.BANK_ACCOUNT_NUMBER || '354601-04-120996',
-    accountHolder: process.env.BANK_ACCOUNT_HOLDER || '',
+    accountHolder: process.env.BANK_ACCOUNT_HOLDER || 'TSOGTGEREL BAASANTSEREN',
   };
 }
 

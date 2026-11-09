@@ -232,6 +232,7 @@ test('create order: waits for bank transfer', async () => {
   const info = await api('GET', '/orders/payment-info');
   assert.equal(info.status, 200);
   assert.equal(info.body.bankAccount.accountNumber, '354601-04-120996');
+  assert.equal(info.body.bankAccount.accountHolder, 'TSOGTGEREL BAASANTSEREN');
 
   const r = await api('POST', '/orders', {
     token: tokens.buyer,
