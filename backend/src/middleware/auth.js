@@ -4,7 +4,7 @@ const serialize = require('../lib/serialize');
 
 async function findUser(userId) {
   if (!serialize.isUuid(userId)) return null;
-  const { rows } = await query('select * from public.users where id = $1', [userId]);
+  const { rows } = await query('select * from public.users where id = $1 and deleted_at is null', [userId]);
   return serialize.user(rows[0]);
 }
 

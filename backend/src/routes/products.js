@@ -28,7 +28,7 @@ function escapeLike(text) {
 }
 
 // `category` can be a category id or a category key ("furniture"). "all" = no filter.
-function buildWhere(q) {
+function buildWhere(q, userId) {
   const clauses = ["p.status = 'active'"];
   const params = [];
   const add = (sql, value) => {
@@ -45,6 +45,10 @@ function buildWhere(q) {
         `(p.category_id = ${n} or exists (select 1 from public.categories a where a.id = ${n} and a.key = 'all'))`
       );
     } else add('c.key = ?', String(q.category));
+  }
+  // Hide listings from sellers I blocked.
+  if (userId) {
+    add('not exists (select 1 from public.blocks bl where bl.blocker_id = ? and bl.blocked_id = p.seller_id)', userId);
   }
   if (q.featured === 'true') clauses.push('p.is_featured');
   if (q.free === 'true') clauses.push('p.is_free');
@@ -73,7 +77,7 @@ router.get('/', optionalAuth, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || '20', 10) || 20));
-    const { where, params } = buildWhere(req.query);
+    const { where, params } = buildWhere(req.query, req.user?.id);
 
     const [items, total] = await Promise.all([
       query(

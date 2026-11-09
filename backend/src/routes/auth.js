@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { query } = require('../config/db');
+const { query, transaction } = require('../config/db');
 const serialize = require('../lib/serialize');
 const { auth } = require('../middleware/auth');
 
@@ -83,7 +83,10 @@ router.post('/register', async (req, res) => {
 
 async function loginBy(column, value, password) {
   if (!value || !password) return null;
-  const { rows } = await query(`select * from public.users where ${column} = $1`, [value]);
+  const { rows } = await query(
+    `select * from public.users where ${column} = $1 and deleted_at is null`,
+    [value]
+  );
   const row = rows[0];
   if (!row || !row.password) return null;
   const valid = await bcrypt.compare(String(password), row.password);
@@ -117,6 +120,95 @@ router.post('/login/phone', async (req, res) => {
 
 router.get('/me', auth, async (req, res) => {
   res.json({ user: formatUser(req.user) });
+});
+
+const LANGUAGES = ['mn', 'kr', 'en'];
+
+// Edit my profile: name, location, language.
+router.patch('/me', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const name = b.name === undefined ? undefined : clean(b.name);
+    const location = b.location === undefined ? undefined : clean(b.location);
+    if (b.name !== undefined && (!name || name.length > 50)) {
+      return res.status(400).json({ message: 'Нэр буруу байна' });
+    }
+    if (location && location.length > 100) {
+      return res.status(400).json({ message: 'Байршил хэт урт байна' });
+    }
+    if (b.language !== undefined && !LANGUAGES.includes(b.language)) {
+      return res.status(400).json({ message: 'Хэл буруу байна' });
+    }
+    const { rows } = await query(
+      `update public.users set
+         name = coalesce($2, name),
+         location = case when $5 then $3 else location end,
+         language = coalesce($4, language)
+       where id = $1 returning *`,
+      [req.user.id, name ?? null, location ?? null, b.language ?? null, b.location !== undefined]
+    );
+    res.json({ user: formatUser(serialize.user(rows[0])) });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.post('/password', auth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({ message: 'Шинэ нууц үг 6-аас дээш тэмдэгттэй байна' });
+    }
+    const { rows } = await query('select password from public.users where id = $1', [req.user.id]);
+    const ok = rows[0]?.password && (await bcrypt.compare(String(currentPassword ?? ''), rows[0].password));
+    if (!ok) return res.status(400).json({ message: 'Одоогийн нууц үг буруу' });
+    await query('update public.users set password = $2 where id = $1', [
+      req.user.id,
+      await bcrypt.hash(newPassword, 10),
+    ]);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Delete my account (required by the App Store). Personal data is wiped and
+// the account can no longer log in; orders keep an anonymous reference.
+router.delete('/me', auth, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    const { rows } = await query('select password from public.users where id = $1', [req.user.id]);
+    const ok = rows[0]?.password && (await bcrypt.compare(String(password ?? ''), rows[0].password));
+    if (!ok) return res.status(400).json({ message: 'Нууц үг буруу' });
+
+    await transaction(async (db) => {
+      // Cancel my unpaid purchases and put those items back on sale.
+      const pending = await db.query(
+        `update public.orders set status = 'cancelled', payment_status = 'failed', cancelled_at = now()
+         where buyer_id = $1 and status = 'pending' and payment_status = 'pending'
+         returning product_id`,
+        [req.user.id]
+      );
+      const productIds = pending.rows.map((r) => r.product_id);
+      if (productIds.length) {
+        await db.query("update public.products set status = 'active' where id = any($1) and status = 'sold'", [
+          productIds,
+        ]);
+      }
+      await db.query("update public.products set status = 'hidden' where seller_id = $1 and status = 'active'", [
+        req.user.id,
+      ]);
+      await db.query(
+        `update public.users set name = 'Устгагдсан хэрэглэгч', email = null, phone = null, password = null,
+           avatar = null, location = null, points = 0, deleted_at = now()
+         where id = $1`,
+        [req.user.id]
+      );
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 module.exports = router;
