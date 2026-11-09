@@ -64,11 +64,15 @@ before(async () => {
     "insert into public.users (name, email, password, role, is_verified) values ($1, $2, $3, 'mover', true)",
     ['Test Mover', email('mover'), hash]
   );
+  await pool.query(
+    "insert into public.users (name, email, password, role, is_verified) values ($1, $2, $3, 'admin', true)",
+    ['Test Admin', email('admin'), hash]
+  );
 });
 
 after(async () => {
   const users = await pool.query("select id from public.users where email like $1", [`%.${TAG}@test.newexit`]);
-  const userIds = users.rows.map((u) => u.id);
+  const userIds = [...new Set([...users.rows.map((u) => u.id), ...(ids.gone ? [ids.gone] : [])])];
   if (userIds.length) {
     await pool.query('delete from public.orders where buyer_id = any($1) or seller_id = any($1)', [userIds]);
     await pool.query('delete from public.users where id = any($1)', [userIds]);
@@ -222,39 +226,69 @@ test('product detail increments views', async () => {
   assert.equal((await api('GET', '/products/665f1c2e8b3f4a0012345678')).status, 404);
 });
 
-test('create order: real initial state, no fake driver', async () => {
+test('create order: waits for bank transfer', async () => {
   await pool.query('update public.users set points = 5000 where id = $1', [ids.buyer]);
+
+  const info = await api('GET', '/orders/payment-info');
+  assert.equal(info.status, 200);
+  assert.equal(info.body.bankAccount.accountNumber, '354601-04-120996');
 
   const r = await api('POST', '/orders', {
     token: tokens.buyer,
-    body: { productId: ids.fridge, paymentMethod: 'zpay', pointsUsed: 1000, deliveryAddress: 'Улаанбаатар' },
+    body: { productId: ids.fridge, paymentMethod: 'bank', pointsUsed: 1000, deliveryAddress: 'Улаанбаатар' },
   });
   assert.equal(r.status, 201, JSON.stringify(r.body));
-  const { order, delivery } = r.body;
+  const { order, delivery, bankAccount } = r.body;
   assert.equal(order.itemPrice, 420000);
   assert.equal(order.totalAmount, 420000 + 30000 + 20000 - 1000);
-  assert.equal(order.status, 'confirmed');
+  assert.equal(order.status, 'pending');
+  assert.equal(order.paymentStatus, 'pending');
+  assert.equal(order.paymentMethod, 'bank');
   assert.equal(order.deliveryAddress, 'Улаанбаатар');
-  assert.equal(order.product.status, 'sold');
+  assert.equal(order.product.status, 'sold', 'reserved while waiting for payment');
   assert.equal(order.buyer.email, email('buyer'));
   assert.equal(order.seller.name, 'Тест seller');
-  assert.equal(order.statusHistory.length, 1);
-
-  assert.match(delivery.trackingNumber, /^NE\d+KR$/);
-  assert.equal(delivery.order, order._id);
-  assert.equal(delivery.currentStatus, 'confirmed');
-  assert.equal(delivery.driver, undefined, 'no driver assigned yet');
-  assert.equal(delivery.timeline.length, 4);
-  assert.deepEqual(delivery.timeline.map((t) => t.completed), [true, false, false, false]);
-  assert.match(delivery.estimatedArrival, /^\d{4}\.\d{2}\.\d{2} ~ \d{2}\.\d{2}$/);
+  assert.equal(delivery, null, 'no delivery until paid');
+  assert.equal(bankAccount.accountNumber, '354601-04-120996');
   ids.order = order._id;
-  ids.tracking = delivery.trackingNumber;
+
+  const detail = await api('GET', `/orders/${ids.order}`, { token: tokens.buyer });
+  assert.equal(detail.body.delivery, null);
+  assert.equal(detail.body.bankAccount.accountNumber, '354601-04-120996');
 
   const me = await api('GET', '/auth/me', { token: tokens.buyer });
   assert.equal(me.body.user.points, 4000);
 
-  assert.equal((await api('GET', `/products?search=Хөргөгч ${TAG}`)).body.total, 0, 'sold items leave the list');
+  assert.equal((await api('GET', `/products?search=Хөргөгч ${TAG}`)).body.total, 0, 'reserved items leave the list');
   assert.equal((await api('POST', '/orders', { token: tokens.other, body: { productId: ids.fridge } })).status, 404);
+});
+
+test('admin confirms the transfer: order paid, delivery starts', async () => {
+  await login('admin');
+  assert.equal((await api('GET', '/orders/admin/pending', { token: tokens.buyer })).status, 403);
+  const pending = await api('GET', '/orders/admin/pending', { token: tokens.admin });
+  assert.equal(pending.status, 200);
+  assert.ok(pending.body.items.some((x) => x.order._id === ids.order));
+
+  assert.equal((await api('POST', `/orders/${ids.order}/confirm-payment`, { token: tokens.buyer })).status, 403);
+  const r = await api('POST', `/orders/${ids.order}/confirm-payment`, { token: tokens.admin });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.order.status, 'confirmed');
+  assert.equal(r.body.order.paymentStatus, 'paid');
+  assert.ok(r.body.order.paidAt);
+  assert.equal(r.body.order.statusHistory.length, 2);
+  const { delivery } = r.body;
+  assert.match(delivery.trackingNumber, /^NE\d+KR$/);
+  assert.equal(delivery.currentStatus, 'confirmed');
+  assert.equal(delivery.driver, undefined, 'no driver assigned yet');
+  assert.deepEqual(delivery.timeline.map((t) => t.completed), [true, false, false, false]);
+  assert.match(delivery.estimatedArrival, /^\d{4}\.\d{2}\.\d{2} ~ \d{2}\.\d{2}$/);
+  ids.tracking = delivery.trackingNumber;
+
+  assert.equal((await api('POST', `/orders/${ids.order}/confirm-payment`, { token: tokens.admin })).status, 409);
+  assert.equal((await api('POST', `/orders/${ids.order}/cancel`, { token: tokens.buyer })).status, 409, 'paid orders cannot be cancelled');
+  const after = await api('GET', `/orders/${ids.order}`, { token: tokens.buyer });
+  assert.equal(after.body.bankAccount, undefined);
 });
 
 test('order validation', async () => {
@@ -272,6 +306,7 @@ test('order validation', async () => {
   assert.equal((await order(tokens.buyer, { productId: ids.lamp, pointsUsed: 999999 })).status, 400, 'not enough points');
   assert.equal((await order(tokens.buyer, { productId: ids.lamp, pointsUsed: -1 })).status, 400);
   assert.equal((await order(tokens.buyer, { productId: ids.lamp, paymentMethod: 'bitcoin' })).status, 400);
+  assert.equal((await order(tokens.buyer, { productId: ids.lamp, paymentMethod: 'card' })).status, 400, 'bank transfer only');
   assert.equal((await order(tokens.buyer, { productId: 'not-an-id' })).status, 404);
 });
 
@@ -368,4 +403,115 @@ test('my listings and my orders', async () => {
   assert.equal(seller.body.purchases.length, 0);
   assert.ok(seller.body.sales.length >= 3);
   assert.equal((await api('GET', '/orders/mine')).status, 401);
+});
+
+test('buyer cancels an unpaid order: item back on sale, points returned', async () => {
+  const p = await createProduct('Сандал');
+  await pool.query('update public.users set points = 300 where id = $1', [ids.other]);
+  const r = await api('POST', '/orders', { token: tokens.other, body: { productId: p._id, pointsUsed: 300 } });
+  assert.equal(r.status, 201);
+  const id = r.body.order._id;
+  assert.equal((await api('POST', `/orders/${id}/cancel`, { token: tokens.buyer })).status, 404, 'not your order');
+  const c = await api('POST', `/orders/${id}/cancel`, { token: tokens.other });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.order.status, 'cancelled');
+  assert.equal((await api('GET', `/products/${p._id}`)).body.status, 'active');
+  assert.equal((await api('GET', '/auth/me', { token: tokens.other })).body.user.points, 300);
+  assert.equal((await api('POST', `/orders/${id}/cancel`, { token: tokens.other })).status, 409);
+});
+
+test('chat between buyer and seller', async () => {
+  const p = await createProduct('Шүүгээ');
+  assert.equal((await api('POST', '/chats', { token: tokens.seller, body: { productId: p._id } })).status, 400);
+  const open = await api('POST', '/chats', { token: tokens.buyer, body: { productId: p._id } });
+  assert.equal(open.status, 201, JSON.stringify(open.body));
+  assert.equal(open.body.otherUser.name, 'Тест seller');
+  const again = await api('POST', '/chats', { token: tokens.buyer, body: { productId: p._id } });
+  assert.equal(again.body._id, open.body._id, 'same chat is reused');
+  const cid = open.body._id;
+
+  const sent = await api('POST', `/chats/${cid}/messages`, { token: tokens.buyer, body: { body: '  Сайн уу?  ' } });
+  assert.equal(sent.status, 201);
+  assert.equal(sent.body.body, 'Сайн уу?');
+  assert.equal((await api('POST', `/chats/${cid}/messages`, { token: tokens.buyer, body: { body: '   ' } })).status, 400);
+  assert.equal((await api('POST', `/chats/${cid}/messages`, { token: tokens.buyer, body: { body: 'x'.repeat(1001) } })).status, 400);
+  assert.equal((await api('GET', `/chats/${cid}/messages`, { token: tokens.other })).status, 404, 'outsiders cannot read');
+
+  const sellerList = await api('GET', '/chats', { token: tokens.seller });
+  const conv = sellerList.body.items.find((c) => c._id === cid);
+  assert.equal(conv.unreadCount, 1);
+  assert.equal(conv.lastMessage.body, 'Сайн уу?');
+  assert.equal(conv.otherUser.name, 'Тест Худалдан авагч');
+
+  const msgs = await api('GET', `/chats/${cid}/messages`, { token: tokens.seller });
+  assert.equal(msgs.body.items.length, 1);
+  assert.equal(msgs.body.items[0].sender, ids.buyer);
+  assert.equal((await api('GET', '/chats', { token: tokens.seller })).body.unreadTotal, 0, 'reading clears unread');
+
+  const reply = await api('POST', `/chats/${cid}/messages`, { token: tokens.seller, body: { body: 'Сайн байна уу' } });
+  const newer = await api('GET', `/chats/${cid}/messages?after=${encodeURIComponent(sent.body.createdAt)}`, { token: tokens.buyer });
+  assert.deepEqual(newer.body.items.map((m) => m._id), [reply.body._id]);
+  ids.chat = cid;
+  ids.chatMessage = reply.body._id;
+  ids.chatProduct = p._id;
+});
+
+test('report and block', async () => {
+  assert.equal((await api('POST', '/reports', { token: tokens.buyer, body: { targetType: 'message', targetId: ids.chatMessage, reason: 'spam' } })).status, 201);
+  assert.equal((await api('POST', '/reports', { token: tokens.buyer, body: { targetType: 'product', targetId: ids.chatProduct } })).status, 201);
+  assert.equal((await api('POST', '/reports', { token: tokens.buyer, body: { targetType: 'nope', targetId: ids.chatProduct } })).status, 400);
+
+  assert.equal((await api('POST', '/blocks', { token: tokens.buyer, body: { userId: ids.buyer } })).status, 400);
+  assert.equal((await api('POST', '/blocks', { token: tokens.buyer, body: { userId: ids.seller } })).status, 201);
+  const blocks = await api('GET', '/blocks', { token: tokens.buyer });
+  assert.deepEqual(blocks.body.items.map((b) => b.id), [ids.seller]);
+
+  assert.ok(!(await api('GET', '/chats', { token: tokens.buyer })).body.items.some((c) => c._id === ids.chat), 'blocked chat hidden');
+  assert.equal((await api('POST', `/chats/${ids.chat}/messages`, { token: tokens.seller, body: { body: 'hi' } })).status, 403);
+  const list = await api('GET', `/products?search=${TAG}`, { token: tokens.buyer });
+  assert.equal(list.body.total, 0, 'blocked seller products hidden');
+
+  assert.equal((await api('DELETE', `/blocks/${ids.seller}`, { token: tokens.buyer })).status, 200);
+  assert.ok((await api('GET', `/products?search=${TAG}`, { token: tokens.buyer })).body.total > 0);
+  assert.equal((await api('POST', `/chats/${ids.chat}/messages`, { token: tokens.seller, body: { body: 'hi' } })).status, 201);
+});
+
+test('profile edit and password change', async () => {
+  const r = await api('PATCH', '/auth/me', { token: tokens.other, body: { name: ' Шинэ нэр ', location: 'Бусан' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.user.name, 'Шинэ нэр');
+  assert.equal(r.body.user.location, 'Бусан');
+  assert.equal((await api('PATCH', '/auth/me', { token: tokens.other, body: { name: '' } })).status, 400);
+  assert.equal((await api('PATCH', '/auth/me', { token: tokens.other, body: { language: 'xx' } })).status, 400);
+
+  assert.equal((await api('POST', '/auth/password', { token: tokens.other, body: { currentPassword: 'wrong', newPassword: 'newpass1' } })).status, 400);
+  assert.equal((await api('POST', '/auth/password', { token: tokens.other, body: { currentPassword: PASSWORD, newPassword: '123' } })).status, 400);
+  assert.equal((await api('POST', '/auth/password', { token: tokens.other, body: { currentPassword: PASSWORD, newPassword: 'newpass1' } })).status, 200);
+  assert.equal((await api('POST', '/auth/login/email', { body: { email: email('other'), password: 'newpass1' } })).status, 200);
+  assert.equal((await api('POST', '/auth/login/email', { body: { email: email('other'), password: PASSWORD } })).status, 401);
+});
+
+test('delete account', async () => {
+  const reg = await api('POST', '/auth/register', { body: { name: 'Gone', email: email('gone'), password: PASSWORD } });
+  assert.equal(reg.status, 201);
+  const token = reg.body.token;
+  ids.gone = reg.body.user.id;
+  const r0 = await api('POST', '/products', {
+    token,
+    body: { title: `Устах ${TAG}`, category: 'furniture', price: 1000, location: 'Сөүл' },
+  });
+  const forSale = await createProduct('Захиалах');
+  await api('POST', '/orders', { token, body: { productId: forSale._id } });
+
+  assert.equal((await api('DELETE', '/auth/me', { token, body: { password: 'wrong' } })).status, 400);
+  assert.equal((await api('DELETE', '/auth/me', { token, body: { password: PASSWORD } })).status, 200);
+
+  assert.equal((await api('GET', '/auth/me', { token })).status, 401, 'token stops working');
+  assert.equal((await api('POST', '/auth/login/email', { body: { email: email('gone'), password: PASSWORD } })).status, 401);
+  assert.equal((await api('GET', `/products/${r0.body._id}`)).body.status, 'hidden', 'listings hidden');
+  assert.equal((await api('GET', `/products/${forSale._id}`)).body.status, 'active', 'unpaid purchase released');
+  const row = await pool.query('select name, email, phone, password from public.users where id = $1', [ids.gone]);
+  assert.deepEqual(row.rows[0], { name: 'Устгагдсан хэрэглэгч', email: null, phone: null, password: null });
+  // Same email can register again.
+  assert.equal((await api('POST', '/auth/register', { body: { name: 'Back', email: email('gone'), password: PASSWORD } })).status, 201);
 });

@@ -9,6 +9,8 @@ const productRoutes = require('./routes/products');
 const { router: orderRoutes } = require('./routes/orders');
 const deliveryRoutes = require('./routes/deliveries');
 const imageRoutes = require('./routes/images');
+const chatRoutes = require('./routes/chats');
+const safetyRoutes = require('./routes/safety');
 
 const app = express();
 
@@ -34,6 +36,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/deliveries', deliveryRoutes);
 app.use('/api/images', imageRoutes);
+app.use('/api/chats', chatRoutes);
+app.use('/api', safetyRoutes);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ message: 'Олдсонгүй' });

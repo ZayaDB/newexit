@@ -42,11 +42,33 @@ function canView(user, orderRow) {
   );
 }
 
+// Where buyers send their bank transfer. Overridable with env vars.
+function bankAccount() {
+  return {
+    bank: process.env.BANK_NAME || 'KB Kookmin Bank (KB국민은행)',
+    accountNumber: process.env.BANK_ACCOUNT_NUMBER || '354601-04-120996',
+    accountHolder: process.env.BANK_ACCOUNT_HOLDER || '',
+  };
+}
+
+const DELIVERY_TIMELINE = (now) => [
+  { status: 'confirmed', labelMn: 'Захиалга батлагдсан', timestamp: now, completed: true },
+  { status: 'preparing', labelMn: 'Бэлтгэгдэж байна', timestamp: null, completed: false },
+  { status: 'out_for_delivery', labelMn: 'Хүргэлтэнд гарсан', timestamp: null, completed: false },
+  { status: 'delivered', labelMn: 'Хүргэгдсэн', timestamp: null, completed: false },
+];
+
+router.get('/payment-info', (_req, res) => {
+  res.json({ bankAccount: bankAccount(), paymentDeadlineHours: 24 });
+});
+
+// Creates an order that waits for a bank transfer. The product is reserved
+// (status 'sold') so nobody else can buy it; cancelling puts it back on sale.
 router.post('/', auth, async (req, res) => {
   try {
     const {
       productId,
-      paymentMethod = 'card',
+      paymentMethod = 'bank',
       includeDelivery = true,
       includeAssembly = true,
       deliveryAddress,
@@ -56,8 +78,8 @@ router.post('/', auth, async (req, res) => {
     if (!serialize.isUuid(productId)) {
       return res.status(404).json({ message: 'Бараа олдсонгүй' });
     }
-    if (!PAYMENT_METHODS.includes(paymentMethod)) {
-      return res.status(400).json({ message: 'Төлбөрийн хэлбэр буруу байна' });
+    if (paymentMethod !== 'bank') {
+      return res.status(400).json({ message: 'Одоогоор зөвхөн дансаар шилжүүлэх боломжтой' });
     }
     if (!Number.isInteger(pointsUsed) || pointsUsed < 0) {
       return res.status(400).json({ message: 'Оноо буруу байна' });
@@ -93,14 +115,14 @@ router.post('/', auth, async (req, res) => {
       const totalAmount = subtotal - pointsApplied;
 
       const now = new Date();
-      const statusHistory = [{ status: 'confirmed', label: 'Захиалга батлагдсан', timestamp: now }];
+      const statusHistory = [{ status: 'pending', label: 'Төлбөр хүлээгдэж байна', timestamp: now }];
 
       const orderRes = await db.query(
         `insert into public.orders (
            order_number, buyer_id, seller_id, product_id, item_price, delivery_fee,
            assembly_fee, points_used, total_amount, payment_method, payment_status,
            status, delivery_address, include_assembly, include_delivery, status_history
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'paid','confirmed',$11,$12,$13,$14)
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'bank','pending','pending',$10,$11,$12,$13)
          returning *`,
         [
           generateOrderNumber(),
@@ -112,7 +134,6 @@ router.post('/', auth, async (req, res) => {
           assemblyFee,
           pointsApplied,
           totalAmount,
-          paymentMethod,
           deliveryAddress || null,
           Boolean(includeAssembly),
           Boolean(includeDelivery),
@@ -120,22 +141,6 @@ router.post('/', auth, async (req, res) => {
         ]
       );
       const orderRow = orderRes.rows[0];
-
-      // A new delivery has only been confirmed; no driver is assigned yet.
-      const timeline = [
-        { status: 'confirmed', labelMn: 'Захиалга батлагдсан', timestamp: now, completed: true },
-        { status: 'preparing', labelMn: 'Бэлтгэгдэж байна', timestamp: null, completed: false },
-        { status: 'out_for_delivery', labelMn: 'Хүргэлтэнд гарсан', timestamp: null, completed: false },
-        { status: 'delivered', labelMn: 'Хүргэгдсэн', timestamp: null, completed: false },
-      ];
-
-      const deliveryRes = await db.query(
-        `insert into public.deliveries (
-           order_id, tracking_number, estimated_arrival, current_status, timeline
-         ) values ($1,$2,$3,'confirmed',$4)
-         returning *`,
-        [orderRow.id, generateTrackingNumber(), estimatedArrival(now), JSON.stringify(timeline)]
-      );
 
       await db.query("update public.products set status = 'sold' where id = $1", [product.id]);
       if (pointsApplied > 0) {
@@ -159,11 +164,114 @@ router.post('/', auth, async (req, res) => {
             buyer: serialize.pick(byId[req.user.id], ['name', 'email', 'phone']),
             seller: serialize.pick(byId[product.seller_id], ['name']),
           }),
-          delivery: serialize.delivery(deliveryRes.rows[0]),
+          delivery: null,
+          bankAccount: bankAccount(),
         },
       };
     });
 
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+function pushHistory(row, status, label, now) {
+  const history = Array.isArray(row.status_history) ? row.status_history : [];
+  return JSON.stringify([...history, { status, label, timestamp: now }]);
+}
+
+// Admin: orders waiting for a bank transfer, oldest first.
+router.get('/admin/pending', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Эрх хүрэлцэхгүй' });
+    const { rows } = await query(
+      `select o.*, to_jsonb(p) as product_row, to_jsonb(b) as buyer_row, to_jsonb(s) as seller_row
+       from public.orders o
+       join public.products p on p.id = o.product_id
+       join public.users b on b.id = o.buyer_id
+       join public.users s on s.id = o.seller_id
+       where o.status = 'pending' and o.payment_status = 'pending'
+       order by o.created_at asc`
+    );
+    res.json({
+      items: rows.map((row) => ({
+        order: serialize.order(row, {
+          product: serialize.pick(serialize.product(row.product_row), ['title', 'images', 'price']),
+          buyer: serialize.pick(serialize.user(row.buyer_row), ['name', 'email', 'phone']),
+          seller: serialize.pick(serialize.user(row.seller_row), ['name']),
+        }),
+        delivery: null,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Admin: the transfer arrived. Marks the order paid and starts the delivery.
+router.post('/:id/confirm-payment', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Эрх хүрэлцэхгүй' });
+    if (!serialize.isUuid(req.params.id)) return res.status(404).json({ message: 'Захиалга олдсонгүй' });
+
+    const result = await transaction(async (db) => {
+      const { rows } = await db.query('select * from public.orders where id = $1 for update', [req.params.id]);
+      const row = rows[0];
+      if (!row) return { status: 404, body: { message: 'Захиалга олдсонгүй' } };
+      if (row.status !== 'pending' || row.payment_status !== 'pending') {
+        return { status: 409, body: { message: 'Энэ захиалгын төлбөр хүлээгдээгүй байна' } };
+      }
+      const now = new Date();
+      const updated = await db.query(
+        `update public.orders set payment_status = 'paid', status = 'confirmed', paid_at = $2,
+           status_history = $3 where id = $1 returning *`,
+        [row.id, now, pushHistory(row, 'confirmed', 'Төлбөр орж, захиалга батлагдсан', now)]
+      );
+      const delivery = await db.query(
+        `insert into public.deliveries (order_id, tracking_number, estimated_arrival, current_status, timeline)
+         values ($1,$2,$3,'confirmed',$4) returning *`,
+        [row.id, generateTrackingNumber(), estimatedArrival(now), JSON.stringify(DELIVERY_TIMELINE(now))]
+      );
+      return {
+        status: 200,
+        body: { order: serialize.order(updated.rows[0]), delivery: serialize.delivery(delivery.rows[0]) },
+      };
+    });
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Cancel an unpaid order (the buyer, or an admin). The product goes back on
+// sale and any points used are returned.
+router.post('/:id/cancel', auth, async (req, res) => {
+  try {
+    if (!serialize.isUuid(req.params.id)) return res.status(404).json({ message: 'Захиалга олдсонгүй' });
+
+    const result = await transaction(async (db) => {
+      const { rows } = await db.query('select * from public.orders where id = $1 for update', [req.params.id]);
+      const row = rows[0];
+      const isAdmin = req.user.role === 'admin';
+      if (!row || (row.buyer_id !== req.user.id && !isAdmin)) {
+        return { status: 404, body: { message: 'Захиалга олдсонгүй' } };
+      }
+      if (row.status !== 'pending' || row.payment_status !== 'pending') {
+        return { status: 409, body: { message: 'Төлбөр орсон захиалгыг цуцлах боломжгүй. Бидэнтэй холбогдоно уу.' } };
+      }
+      const now = new Date();
+      const updated = await db.query(
+        `update public.orders set status = 'cancelled', payment_status = 'failed', cancelled_at = $2,
+           status_history = $3 where id = $1 returning *`,
+        [row.id, now, pushHistory(row, 'cancelled', 'Захиалга цуцлагдсан', now)]
+      );
+      await db.query("update public.products set status = 'active' where id = $1 and status = 'sold'", [row.product_id]);
+      if (row.points_used > 0) {
+        await db.query('update public.users set points = points + $1 where id = $2', [row.points_used, row.buyer_id]);
+      }
+      return { status: 200, body: { order: serialize.order(updated.rows[0]) } };
+    });
     res.status(result.status).json(result.body);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -231,10 +339,11 @@ router.get('/:id', auth, async (req, res) => {
         seller: serialize.pick(serialize.user(row.seller_row), ['name']),
       }),
       delivery: serialize.delivery(row.delivery_row),
+      bankAccount: row.status === 'pending' && row.payment_status === 'pending' ? bankAccount() : undefined,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-module.exports = { router, canView };
+module.exports = { router, canView, bankAccount };

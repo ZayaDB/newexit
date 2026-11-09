@@ -106,6 +106,8 @@ function order(row, { product: prod, buyer, seller } = {}) {
     includeAssembly: row.include_assembly,
     includeDelivery: row.include_delivery,
     statusHistory: row.status_history,
+    paidAt: row.paid_at ?? undefined,
+    cancelledAt: row.cancelled_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
