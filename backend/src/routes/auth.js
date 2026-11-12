@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query, transaction } = require('../config/db');
 const serialize = require('../lib/serialize');
-const { auth } = require('../middleware/auth');
+const { auth, SUSPENDED_MESSAGE } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -24,6 +24,7 @@ function formatUser(user) {
     points: user.points,
     badge: user.badge,
     language: user.language,
+    createdAt: user.createdAt,
   };
 }
 
@@ -100,6 +101,7 @@ router.post('/login/email', async (req, res) => {
     if (!user) {
       return res.status(401).json({ message: 'Имэйл эсвэл нууц үг буруу' });
     }
+    if (user.suspended) return res.status(403).json({ message: SUSPENDED_MESSAGE, suspended: true });
     res.json({ token: signToken(user.id), user: formatUser(user) });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -112,6 +114,7 @@ router.post('/login/phone', async (req, res) => {
     if (!user) {
       return res.status(401).json({ message: 'Утас эсвэл нууц үг буруу' });
     }
+    if (user.suspended) return res.status(403).json({ message: SUSPENDED_MESSAGE, suspended: true });
     res.json({ token: signToken(user.id), user: formatUser(user) });
   } catch (error) {
     res.status(500).json({ message: error.message });

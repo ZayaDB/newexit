@@ -31,6 +31,7 @@ function user(row) {
     points: row.points,
     badge: row.badge ?? undefined,
     language: row.language,
+    suspended: Boolean(row.suspended_at),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -131,6 +132,12 @@ function delivery(row, { order: ord } = {}) {
     driver: row.driver ?? undefined,
     eta: row.eta ?? undefined,
     liveTrackingEnabled: row.live_tracking_enabled,
+    driverId: row.driver_id ?? undefined,
+    carrier: row.carrier ?? undefined,
+    carrierTracking: row.carrier_tracking ?? undefined,
+    pickedUpAt: row.picked_up_at ?? undefined,
+    shippedAt: row.shipped_at ?? undefined,
+    deliveredAt: row.delivered_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

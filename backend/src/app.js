@@ -12,6 +12,9 @@ const imageRoutes = require('./routes/images');
 const chatRoutes = require('./routes/chats');
 const safetyRoutes = require('./routes/safety');
 const favoriteRoutes = require('./routes/favorites');
+const notificationRoutes = require('./routes/notifications');
+const { router: userRoutes } = require('./routes/users');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
@@ -39,6 +42,9 @@ app.use('/api/deliveries', deliveryRoutes);
 app.use('/api/images', imageRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/favorites', favoriteRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api', userRoutes);
 app.use('/api', safetyRoutes);
 
 app.use('/api', (_req, res) => {

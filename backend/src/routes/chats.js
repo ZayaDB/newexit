@@ -3,6 +3,7 @@ const express = require('express');
 const { query } = require('../config/db');
 const serialize = require('../lib/serialize');
 const { auth } = require('../middleware/auth');
+const { notify } = require('../lib/notify');
 
 const router = express.Router();
 
@@ -33,9 +34,13 @@ function message(row) {
     conversation: row.conversation_id,
     sender: row.sender_id,
     body: row.body,
+    image: row.image_url ?? undefined,
     createdAt: row.created_at,
   };
 }
+
+// Photos must be uploaded through POST /api/images first.
+const IMAGE_URL = /^https?:\/\/[^\s/]+\/api\/images\/[\w.-]+$/;
 
 function conversation(row, userId) {
   const iAmBuyer = row.buyer_id === userId;
@@ -63,6 +68,8 @@ function conversation(row, userId) {
     lastMessage: row.last_row ? message(row.last_row) : null,
     unreadCount: row.unread_count ?? 0,
     blocked: Boolean(row.blocked),
+    // When the other person last opened the chat (for "read" ticks).
+    otherReadAt: iAmBuyer ? row.seller_read_at : row.buyer_read_at,
     lastMessageAt: row.last_message_at,
     createdAt: row.created_at,
   };
@@ -171,21 +178,32 @@ router.post('/:id/messages', auth, async (req, res) => {
     const c = await findConversation(req.params.id, req.user.id);
     if (!c) return res.status(404).json({ message: 'Чат олдсонгүй' });
     const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
-    if (!body) return res.status(400).json({ message: 'Мессеж хоосон байна' });
+    const image = typeof req.body?.image === 'string' ? req.body.image.trim() : '';
+    if (image && (image.length > 500 || !IMAGE_URL.test(image))) {
+      return res.status(400).json({ message: 'Зураг буруу байна' });
+    }
+    if (!body && !image) return res.status(400).json({ message: 'Мессеж хоосон байна' });
     if (body.length > MAX_BODY) return res.status(400).json({ message: 'Мессеж хэт урт байна' });
     const other = c.buyer_id === req.user.id ? c.seller_id : c.buyer_id;
     if (await isBlocked(req.user.id, other)) {
       return res.status(403).json({ message: 'Энэ хэрэглэгчтэй чатлах боломжгүй' });
     }
     const { rows } = await query(
-      'insert into public.messages (conversation_id, sender_id, body) values ($1, $2, $3) returning *',
-      [c.id, req.user.id, body]
+      'insert into public.messages (conversation_id, sender_id, body, image_url) values ($1, $2, $3, $4) returning *',
+      [c.id, req.user.id, body, image || null]
     );
     const column = c.buyer_id === req.user.id ? 'buyer_read_at' : 'seller_read_at';
     await query(
       `update public.conversations set last_message_at = $2, ${column} = $2 where id = $1`,
       [c.id, rows[0].created_at]
     );
+    await notify([other], {
+      type: 'chat',
+      title: req.user.name,
+      body: body ? body.slice(0, 140) : '📷 Зураг',
+      data: { url: `/chat/${c.id}` },
+      store: false,
+    });
     res.status(201).json(message(rows[0]));
   } catch (error) {
     res.status(500).json({ message: error.message });
