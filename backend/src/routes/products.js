@@ -114,10 +114,19 @@ router.get('/', optionalAuth, async (req, res) => {
 router.get('/mine', auth, async (req, res) => {
   try {
     const { rows } = await query(
-      `${SELECT_WITH_RELATIONS} where p.seller_id = $1 order by p.created_at desc`,
+      `select x.*,
+         exists (select 1 from public.orders o where o.product_id = x.id and o.status <> 'cancelled') as ordered,
+         exists (select 1 from public.orders o where o.product_id = x.id
+                   and o.status not in ('cancelled', 'delivered')) as open_order
+       from (${SELECT_WITH_RELATIONS} where p.seller_id = $1) x
+       order by x.created_at desc`,
       [req.user.id]
     );
-    res.json({ items: rows.map((row) => withRelations(row)), total: rows.length });
+    // ordered: bought through the app (status can't be flipped); openOrder: can't be deleted yet.
+    res.json({
+      items: rows.map((row) => ({ ...withRelations(row), ordered: row.ordered, openOrder: row.open_order })),
+      total: rows.length,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

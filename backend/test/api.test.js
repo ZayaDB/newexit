@@ -641,6 +641,9 @@ test('edit, mark sold and delete a listing', async () => {
   assert.equal(o.status, 201);
   assert.equal((await patch(tokens.seller, { status: 'active' })).status, 409);
   assert.equal((await api('DELETE', `/products/${p._id}`, { token: tokens.seller })).status, 409);
+  const mine = (await api('GET', '/products/mine', { token: tokens.seller })).body.items.find((x) => x._id === p._id);
+  assert.equal(mine.ordered, true);
+  assert.equal(mine.openOrder, true);
   await api('POST', `/orders/${o.body.order._id}/cancel`, { token: tokens.buyer });
 
   // Ordered once (cancelled) -> hidden instead of deleted.
