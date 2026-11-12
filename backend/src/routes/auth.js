@@ -124,7 +124,10 @@ router.get('/me', auth, async (req, res) => {
 
 const LANGUAGES = ['mn', 'kr', 'en'];
 
-// Edit my profile: name, location, language.
+// Avatars must be images uploaded through POST /api/images.
+const AVATAR_URL = /^https?:\/\/[^\s/]+\/api\/images\/[\w.-]+$/;
+
+// Edit my profile: name, location, language, avatar (null removes it).
 router.patch('/me', auth, async (req, res) => {
   try {
     const b = req.body || {};
@@ -139,13 +142,27 @@ router.patch('/me', auth, async (req, res) => {
     if (b.language !== undefined && !LANGUAGES.includes(b.language)) {
       return res.status(400).json({ message: 'Хэл буруу байна' });
     }
+    if (b.avatar !== undefined && b.avatar !== null) {
+      if (typeof b.avatar !== 'string' || b.avatar.length > 500 || !AVATAR_URL.test(b.avatar)) {
+        return res.status(400).json({ message: 'Зураг буруу байна' });
+      }
+    }
     const { rows } = await query(
       `update public.users set
          name = coalesce($2, name),
          location = case when $5 then $3 else location end,
-         language = coalesce($4, language)
+         language = coalesce($4, language),
+         avatar = case when $7 then $6 else avatar end
        where id = $1 returning *`,
-      [req.user.id, name ?? null, location ?? null, b.language ?? null, b.location !== undefined]
+      [
+        req.user.id,
+        name ?? null,
+        location ?? null,
+        b.language ?? null,
+        b.location !== undefined,
+        b.avatar ?? null,
+        b.avatar !== undefined,
+      ]
     );
     res.json({ user: formatUser(serialize.user(rows[0])) });
   } catch (error) {
