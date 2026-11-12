@@ -714,3 +714,41 @@ test('admin: reports, listings, users', async () => {
   assert.equal((await api('GET', '/auth/me', { token: tokens.other })).status, 200);
   assert.equal((await api('PATCH', `/admin/users/${ids.admin}`, { token: tokens.admin, body: { role: 'buyer' } })).status, 400, 'not yourself');
 });
+
+test('Кино: list, admin add / hide / rename / delete', async () => {
+  const { youtubeId } = require('../src/routes/movies');
+  for (const [input, id] of [
+    ['https://www.youtube.com/watch?v=Y3bx0xPUVYo&list=PLAMipjJi-nBM', 'Y3bx0xPUVYo'],
+    ['https://youtu.be/Y3bx0xPUVYo?t=10', 'Y3bx0xPUVYo'],
+    ['https://www.youtube.com/shorts/Y3bx0xPUVYo', 'Y3bx0xPUVYo'],
+    ['https://www.youtube.com/embed/Y3bx0xPUVYo', 'Y3bx0xPUVYo'],
+    ['Y3bx0xPUVYo', 'Y3bx0xPUVYo'],
+    ['https://evil.example/watch?v=Y3bx0xPUVYo', null],
+    ['nope', null],
+  ]) assert.equal(youtubeId(input), id, input);
+
+  const list = await api('GET', '/movies');
+  assert.equal(list.status, 200);
+  assert.ok(list.body.items.length >= 80, 'seeded playlist');
+  assert.match(list.body.items[0].thumbnail, /^https:\/\/i\.ytimg\.com\/vi\/[\w-]{11}\/hqdefault\.jpg$/);
+  assert.ok(list.body.items.every((m) => !/#\S/.test(m.title)), 'hashtags cleaned');
+
+  const vid = `T${crypto.randomBytes(5).toString('hex')}`; // 11 chars
+  assert.equal((await api('POST', '/movies', { token: tokens.buyer, body: { url: vid } })).status, 403);
+  assert.equal((await api('POST', '/movies', { token: tokens.admin, body: { url: 'not a link' } })).status, 400);
+  const add = await api('POST', '/movies', { token: tokens.admin, body: { url: `https://youtu.be/${vid}`, title: `Тест кино ${TAG}` } });
+  assert.equal(add.status, 201, JSON.stringify(add.body));
+  assert.equal(add.body.youtubeId, vid);
+  assert.equal((await api('POST', '/movies', { token: tokens.admin, body: { url: vid } })).status, 409, 'no duplicates');
+  assert.equal((await api('GET', '/movies')).body.items[0]._id, add.body._id, 'new ones first');
+
+  const hide = await api('PATCH', `/movies/${add.body._id}`, { token: tokens.admin, body: { isActive: false, title: 'Шинэ нэр' } });
+  assert.equal(hide.body.isActive, false);
+  assert.equal(hide.body.title, 'Шинэ нэр');
+  assert.ok(!(await api('GET', '/movies')).body.items.some((m) => m._id === add.body._id), 'hidden from users');
+  assert.equal((await api('GET', `/movies/${add.body._id}`)).status, 404);
+  assert.ok((await api('GET', '/movies?all=true', { token: tokens.admin })).body.items.some((m) => m._id === add.body._id));
+  assert.equal((await api('PATCH', `/movies/${add.body._id}`, { token: tokens.buyer, body: { isActive: true } })).status, 403);
+  assert.equal((await api('DELETE', `/movies/${add.body._id}`, { token: tokens.admin })).status, 200);
+  assert.equal((await api('DELETE', `/movies/${add.body._id}`, { token: tokens.admin })).status, 404);
+});

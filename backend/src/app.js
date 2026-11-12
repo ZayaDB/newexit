@@ -15,6 +15,7 @@ const favoriteRoutes = require('./routes/favorites');
 const notificationRoutes = require('./routes/notifications');
 const { router: userRoutes } = require('./routes/users');
 const adminRoutes = require('./routes/admin');
+const { router: movieRoutes } = require('./routes/movies');
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/favorites', favoriteRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/movies', movieRoutes);
 app.use('/api', userRoutes);
 app.use('/api', safetyRoutes);
 
