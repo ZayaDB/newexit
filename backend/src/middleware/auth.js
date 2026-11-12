@@ -8,6 +8,8 @@ async function findUser(userId) {
   return serialize.user(rows[0]);
 }
 
+const SUSPENDED_MESSAGE = 'Таны бүртгэл түр хаагдсан байна. Бидэнтэй холбогдоно уу.';
+
 function readToken(req) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return null;
@@ -32,6 +34,9 @@ async function auth(req, res, next) {
     if (!user) {
       return res.status(401).json({ message: 'Хэрэглэгч олдсонгүй' });
     }
+    if (user.suspended) {
+      return res.status(403).json({ message: SUSPENDED_MESSAGE, suspended: true });
+    }
     req.user = user;
     next();
   } catch (error) {
@@ -52,4 +57,4 @@ async function optionalAuth(req, _res, next) {
   next();
 }
 
-module.exports = { auth, optionalAuth };
+module.exports = { auth, optionalAuth, SUSPENDED_MESSAGE };

@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { query, transaction } = require('../config/db');
 const serialize = require('../lib/serialize');
 const { auth } = require('../middleware/auth');
+const { notify, notifyRoles } = require('../lib/notify');
 
 const router = express.Router();
 
@@ -51,10 +52,11 @@ function bankAccount() {
   };
 }
 
+// Same steps as the driver workflow in routes/deliveries.js.
 const DELIVERY_TIMELINE = (now) => [
-  { status: 'confirmed', labelMn: 'Захиалга батлагдсан', timestamp: now, completed: true },
-  { status: 'preparing', labelMn: 'Бэлтгэгдэж байна', timestamp: null, completed: false },
-  { status: 'out_for_delivery', labelMn: 'Хүргэлтэнд гарсан', timestamp: null, completed: false },
+  { status: 'confirmed', labelMn: 'Төлбөр баталгаажсан', timestamp: now, completed: true },
+  { status: 'picked_up', labelMn: 'Жолооч бараа хүлээн авсан', timestamp: null, completed: false },
+  { status: 'in_transit', labelMn: 'Илгээмжид өгсөн', timestamp: null, completed: false },
   { status: 'delivered', labelMn: 'Хүргэгдсэн', timestamp: null, completed: false },
 ];
 
@@ -170,6 +172,21 @@ router.post('/', auth, async (req, res) => {
       };
     });
 
+    if (result.status === 201) {
+      const o = result.body.order;
+      await notify([o.seller._id], {
+        type: 'order',
+        title: 'Таны бараа захиалагдлаа',
+        body: `"${o.product.title}" — худалдан авагчийн төлбөр орж ирэхийг хүлээж байна.`,
+        data: { url: `/order/${o._id}` },
+      });
+      await notifyRoles(['admin'], {
+        type: 'admin',
+        title: 'Шинэ төлбөр шалгах',
+        body: `${o.orderNumber}: ₩${o.totalAmount.toLocaleString('ko-KR')}`,
+        data: { url: '/admin' },
+      });
+    }
     res.status(result.status).json(result.body);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -235,9 +252,33 @@ router.post('/:id/confirm-payment', auth, async (req, res) => {
       );
       return {
         status: 200,
+        row,
         body: { order: serialize.order(updated.rows[0]), delivery: serialize.delivery(delivery.rows[0]) },
       };
     });
+    if (result.status === 200) {
+      const { row } = result;
+      const p = await query('select title from public.products where id = $1', [row.product_id]);
+      const title = p.rows[0]?.title || '';
+      await notify([row.buyer_id], {
+        type: 'order',
+        title: 'Төлбөр баталгаажлаа',
+        body: `"${title}" захиалга батлагдлаа. Жолооч удахгүй хүргэнэ.`,
+        data: { url: `/delivery/${row.id}` },
+      });
+      await notify([row.seller_id], {
+        type: 'order',
+        title: 'Төлбөр орлоо',
+        body: `"${title}" — жолооч бараа авахаар ирнэ.`,
+        data: { url: `/order/${row.id}` },
+      });
+      await notifyRoles(['mover'], {
+        type: 'job',
+        title: 'Шинэ хүргэлтийн ажил',
+        body: `"${title}"`,
+        data: { url: '/mover' },
+      });
+    }
     res.status(result.status).json(result.body);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -270,8 +311,16 @@ router.post('/:id/cancel', auth, async (req, res) => {
       if (row.points_used > 0) {
         await db.query('update public.users set points = points + $1 where id = $2', [row.points_used, row.buyer_id]);
       }
-      return { status: 200, body: { order: serialize.order(updated.rows[0]) } };
+      return { status: 200, row, body: { order: serialize.order(updated.rows[0]) } };
     });
+    if (result.status === 200) {
+      await notify([result.row.seller_id], {
+        type: 'order',
+        title: 'Захиалга цуцлагдлаа',
+        body: 'Таны бараа дахин зарагдаж байна.',
+        data: { url: `/order/${result.row.id}` },
+      });
+    }
     res.status(result.status).json(result.body);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -332,13 +381,17 @@ router.get('/:id', auth, async (req, res) => {
       return res.status(404).json({ message: 'Захиалга олдсонгүй' });
     }
 
+    const review = await query('select * from public.reviews where order_id = $1', [row.id]);
+    const { reviewable, formatReview } = require('./users');
     res.json({
       order: serialize.order(row, {
         product: serialize.product(row.product_row),
         buyer: serialize.pick(serialize.user(row.buyer_row), ['name']),
-        seller: serialize.pick(serialize.user(row.seller_row), ['name']),
+        seller: serialize.pick(serialize.user(row.seller_row), ['name', 'avatar', 'isVerified']),
       }),
       delivery: serialize.delivery(row.delivery_row),
+      review: review.rows[0] ? formatReview(review.rows[0]) : null,
+      canReview: !review.rows[0] && row.buyer_id === req.user.id && reviewable(row),
       bankAccount: row.status === 'pending' && row.payment_status === 'pending' ? bankAccount() : undefined,
     });
   } catch (error) {
