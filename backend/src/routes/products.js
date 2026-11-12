@@ -52,6 +52,13 @@ function buildWhere(q, userId) {
   }
   if (q.featured === 'true') clauses.push('p.is_featured');
   if (q.free === 'true') clauses.push('p.is_free');
+  const minPrice = parseInt(q.minPrice, 10);
+  const maxPrice = parseInt(q.maxPrice, 10);
+  if (Number.isFinite(minPrice) && minPrice > 0) add('p.price >= ?', minPrice);
+  if (Number.isFinite(maxPrice) && maxPrice >= 0) add('p.price <= ?', maxPrice);
+  if (q.condition && ['new', 'used', 'good', 'fair'].includes(String(q.condition))) {
+    add('p.condition = ?', String(q.condition));
+  }
   if (q.search && String(q.search).trim()) {
     params.push(`%${escapeLike(String(q.search).trim())}%`);
     const n = `$${params.length}`;
